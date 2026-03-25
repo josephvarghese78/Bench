@@ -1,6 +1,6 @@
 import random
 import threading
-import os, json
+import json
 import requests
 import config as cfg
 import shutil
@@ -9,25 +9,42 @@ from datetime import datetime
 import sqlite3
 import uuid
 import time
-import random
-
 import os
 import re
+import requesthandler as rh
+import inspect
+import custom as c
 
-import os
-import re
-import custom as custcode
 
 try:
     with open(f"./data.json", 'r') as f:
         cfg.requests_data = json.load(f)
 except:
     pass
-cfg.project_name = cfg.requests_data.get("project", "Project")
+cfg.project_name = cfg.project_name
 count = sum(1 for f in os.listdir("./db") if f.startswith(cfg.project_name) and f.endswith("db"))
 cfg.db_filename = f"{cfg.project_name}.db" if count == 0 else f"{cfg.project_name}_{count}.db"
 shutil.copy(f"./templates/template.db", f"./db/{cfg.db_filename}")
 
+
+def task_propotion(lst, users, weights):
+    total = sum(weights)
+    percentages = [round((w / total) * users, 0) for w in weights]
+    d_list = []
+
+    for i in range(len(lst)):
+        p = percentages[i]
+        for j in range(int(p)):
+            d_list.append(lst[i])
+
+    if len(d_list) > users:
+        d_list = d_list[:users]
+
+    while len(d_list) < users:
+        d_list.append(random.choices(lst, weights)[0])
+
+    random.shuffle(d_list)
+    return d_list
 
 def log_performance(test_name,
                     thread_name, iteration, start_time, end_time,
@@ -53,13 +70,13 @@ def log_performance(test_name,
 
 class user_thread():
 
-    thread_name = ""
+    def __init__(self):
+        self.thread_name = ""
+        self.thread_task=None
 
     def start_user(self):
         i=0
         user_session = requests.session()
-
-
 
         while (time.time() - cfg.test_start_time) < ((cfg.runfor+0) * 60):
 
@@ -69,7 +86,7 @@ class user_thread():
             i += 1
             cfg.samples_started += 1
 
-            resp, status_code, error_flag, think_time, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time = custcode.api_request_main(user_session)
+            resp, status_code, error_flag, think_time, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time = rh.api_request_main(user_session, self.thread_task)
             cfg.samples_completed+=1
             if error_flag in cfg.error_flags:
                 cfg.current_errors += 1
@@ -108,9 +125,12 @@ class user_thread():
             cfg.running_users-=1
 
 
-def perftest(thread_name):
+def perftest(thread_name, thread_task):
+
+
     user = user_thread()
     user.thread_name = thread_name
+    user.thread_task=thread_task
     user.start_user()
 
 
@@ -122,6 +142,14 @@ def runtest():
     print(f"Project: {cfg.project_name} | Database: {cfg.db_filename}")
     print("=" * 80 + "\n")
 
+    runnable_tasks = [obj for name, obj in inspect.getmembers(c) if
+                      inspect.isfunction(obj) and getattr(obj, 'is_task', False)
+                      and getattr(obj, 'enabled', True) ]
+
+    w = [runnable_task.weight for runnable_task in runnable_tasks]
+
+
+
     while cfg.users > 0 and cfg.users < cfg.stop_at_user:
         cfg.suite_id = str(uuid.uuid4())
         cfg.test_start_time = time.time()
@@ -131,6 +159,7 @@ def runtest():
         cfg.running_users = 0
         cfg.error_percent = 0
         #cfg.delay_between_thread = cfg.rampup / (cfg.users - 1)
+        runnable_tasks = task_propotion(runnable_tasks, cfg.users, w)
 
 
 
@@ -145,12 +174,13 @@ def runtest():
         print("=" * 80 + "\n")
 
         for _ in range(cfg.users):
+            thread_task = runnable_tasks[i]
             cfg.test_start_time = time.time()
             i += 1
             cfg.running_users = i
             thread_name = f"User-{i}"
             #user_session = requests.session()
-            t = threading.Thread(target=perftest, args=(thread_name,))
+            t = threading.Thread(target=perftest, args=(thread_name,thread_task,))
             threads.append(t)
             t.start()
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Started {thread_name}")
