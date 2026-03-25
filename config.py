@@ -1,14 +1,14 @@
-project_name="MyProject"
+project_name="ASK_HR"
 valid_status_codes=[200,201,204]
 ignore_status_codes=[429,499]
 error_threshold=5
-users=10
-runfor=5
+users=20
+runfor=20
 user_step=5
-think_time=[4, 6, 8]
-rampup_per_user=[2,4,6,8,10]
+think_time=[3,4,5,6,7]
+rampup_per_user=[2,3,1]
 delay_between_thread=1
-stop_at_user=55
+stop_at_user=25
 
 error_flags=['F']  # P=Pass, F=Fail, W=
 
@@ -57,3 +57,6 @@ project_sla={
   "percentile_95": 3.0,
   "percentile_99": 5.0
 }
+
+
+
