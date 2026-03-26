@@ -11,9 +11,8 @@ import uuid
 import time
 import os
 import re
-import requesthandler as rh
 import inspect
-import custom as c
+from custom import api_requests
 
 
 try:
@@ -21,6 +20,8 @@ try:
         cfg.requests_data = json.load(f)
 except:
     pass
+
+
 cfg.project_name = cfg.project_name
 count = sum(1 for f in os.listdir("./db") if f.startswith(cfg.project_name) and f.endswith("db"))
 cfg.db_filename = f"{cfg.project_name}.db" if count == 0 else f"{cfg.project_name}_{count}.db"
@@ -29,16 +30,19 @@ shutil.copy(f"./templates/template.db", f"./db/{cfg.db_filename}")
 
 def task_propotion(lst, users, weights):
     total = sum(weights)
-    percentages = [round((w / total) * users, 0) for w in weights]
+    w_users=int(round(random.choice([.2,.25,.3,.35,.4,.45,.5,.55])))
+    percentages = [round((w / total) * (users+w_users), 0) for w in weights]
     d_list = []
+
+    print(weights)
 
     for i in range(len(lst)):
         p = percentages[i]
         for j in range(int(p)):
             d_list.append(lst[i])
 
-    if len(d_list) > users:
-        d_list = d_list[:users]
+    #if len(d_list) > users:
+    #    d_list = d_list[:users]
 
     while len(d_list) < users:
         d_list.append(random.choices(lst, weights)[0])
@@ -73,6 +77,7 @@ class user_thread():
     def __init__(self):
         self.thread_name = ""
         self.thread_task=None
+        self.custom_functions= api_requests()
 
     def start_user(self):
         i=0
@@ -86,7 +91,7 @@ class user_thread():
             i += 1
             cfg.samples_started += 1
 
-            resp, status_code, error_flag, think_time, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time = rh.api_request_main(user_session, self.thread_task)
+            resp, status_code, error_flag, think_time, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time = self.api_request_main(user_session, self.thread_task)
             cfg.samples_completed+=1
             if error_flag in cfg.error_flags:
                 cfg.current_errors += 1
@@ -125,9 +130,54 @@ class user_thread():
             cfg.running_users-=1
 
 
+    def api_request_main(self, user_session, f):
+        tt = random.choice(cfg.think_time)
+        start_time = None
+        start_time_pc = None
+        end_time = None
+        end_time_pc = None
+        response_time = None
+        test_name = None
+        try:
+
+            time.sleep(tt)
+            start_time = datetime.now()
+            start_time_pc = time.perf_counter()
+
+            resp, test_name = f(user_session)
+
+            end_time = datetime.now()
+            end_time_pc = time.perf_counter()
+            response_time = (end_time_pc - start_time_pc) * 1000
+
+            if resp is not None:
+                try:
+                    resp_content = resp.json()
+                except ValueError:
+                    resp_content = resp.text
+
+                status_code = resp.status_code
+                error_flag = 0 if resp.status_code in cfg.valid_status_codes + cfg.ignore_status_codes else 1
+
+                status_code = resp.status_code
+                error_flag = ""
+                if resp.status_code in cfg.valid_status_codes:
+                    error_flag = "P"
+                elif resp.status_code in cfg.ignore_status_codes:
+                    error_flag = "W"
+                else:
+                    error_flag = "F"
+
+                return resp_content, status_code, error_flag, tt, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time
+            else:
+                return "None", "0", "W", tt, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time
+
+        except Exception as e:
+            print(e)
+            return str(e), 0, 1, tt, test_name, start_time, start_time_pc, end_time, end_time_pc, response_time
+
+
 def perftest(thread_name, thread_task):
-
-
     user = user_thread()
     user.thread_name = thread_name
     user.thread_task=thread_task
@@ -142,7 +192,7 @@ def runtest():
     print(f"Project: {cfg.project_name} | Database: {cfg.db_filename}")
     print("=" * 80 + "\n")
 
-    runnable_tasks = [obj for name, obj in inspect.getmembers(c) if
+    runnable_tasks = [obj for name, obj in inspect.getmembers(api_requests) if
                       inspect.isfunction(obj) and getattr(obj, 'is_task', False)
                       and getattr(obj, 'enabled', True) ]
 
@@ -159,7 +209,7 @@ def runtest():
         cfg.running_users = 0
         cfg.error_percent = 0
         #cfg.delay_between_thread = cfg.rampup / (cfg.users - 1)
-        runnable_tasks = task_propotion(runnable_tasks, cfg.users, w)
+        task_list = task_propotion(runnable_tasks, cfg.users, w)
 
 
 
@@ -174,7 +224,10 @@ def runtest():
         print("=" * 80 + "\n")
 
         for _ in range(cfg.users):
-            thread_task = runnable_tasks[i]
+            api_requests_instance = api_requests()
+            selected_thread_task = task_list[i]
+            thread_task = selected_thread_task.__get__(api_requests_instance, api_requests)
+
             cfg.test_start_time = time.time()
             i += 1
             cfg.running_users = i
