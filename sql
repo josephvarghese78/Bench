@@ -47,10 +47,16 @@ group by suite_name, test_name),
 stddev as (SELECT suite_name, test_name, SQRT(AVG(response_time * response_time) - AVG(response_time) * AVG(response_time))/1000 AS stddev FROM performance
 group by suite_name, test_name),
 tpm as (select suite_name, test_name, 
-((strftime('%s', max(datetime(end_time)))-strftime('%s',min(datetime(start_time))))/60) as ttime, count(1) as samples from performance
+cast(((strftime('%s', max(datetime(end_time)))-strftime('%s',min(datetime(start_time))))/60) as real) as ttime, count(1) as samples from performance
+where error_status in ('P')
 group by suite_name, test_name),
 performance_metrics as (SELECT o1.suite_name, o1.test_name,u.users, o1.max_threads, t.samples, t.ttime as test_duration,
-		t.samples/t.ttime as tpm,
+		round(t.samples/t.ttime,0) as tpm,
+		round(t.samples/(t.ttime*60),0) as throughput ,
+		round(u.users/(AVG(response_time)/1000),0) as expected_throughput,
+		round(((t.samples/(t.ttime*60))/(u.users/(AVG(response_time)/1000))*100),0) as efficiency_per,
+		round((u.users/(AVG(response_time)/1000))/(t.samples/(t.ttime*60)),0) as scale_x,
+		u.users*round((u.users/(AVG(response_time)/1000))/(t.samples/(t.ttime*60)),0) as estimated_users,
        MIN(response_time)/1000 AS min_response_time,
        MAX(response_time)/1000 AS max_response_time,
        AVG(response_time)/1000 AS avg_response_time,
