@@ -1,20 +1,25 @@
-project_name="ASK_HR"
+project_name="BENCH_TEST"
 valid_status_codes=[200,201,204]
 ignore_status_codes=[429,499]
 error_threshold=5
-users=20
-runfor=20
+users=5
+runfor=5
 user_step=5
 think_time=[3,4,5,6,7]
 rampup_per_user=[2,3,1]
 delay_between_thread=1
-stop_at_user=25
+stop_at_user=505
+stop_requested=False
+
 
 error_flags=['F']  # P=Pass, F=Fail, W=
 
 #active_threads=0
 samples_started=0
 samples_completed=0
+total_response_time=0
+avg=0
+el=0
 
 requests_data=None
 db_conn=None
