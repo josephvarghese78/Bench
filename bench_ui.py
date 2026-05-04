@@ -14,6 +14,11 @@ import inspect
 import config as cfg
 from custom import api_requests
 
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
 # ══════════════════════════════════════════════════════════════
 #  COLOUR PALETTE  (light theme)
 # ══════════════════════════════════════════════════════════════
@@ -189,9 +194,18 @@ class BenchUI:
         self.root.title("⚡ Performance Bench Test — Control Panel")
         self.root.configure(bg=BG)
         self.root.resizable(True, True)
-        self.root.minsize(820, 680)
+        self.root.minsize(1100, 720)
         self._stop_flag = False
         self._test_done_flag=False
+
+        # ── Live chart history buffers ──────────────────────
+        self._chart_time   = []
+        self._chart_avg_rt = []
+        self._chart_tps    = []
+        self._chart_tpm    = []
+        self._chart_eff    = []
+        self._MAX_POINTS   = 120
+
         self._apply_ttk_theme()
         self._build_ui()
 
@@ -295,7 +309,6 @@ class BenchUI:
         for r, (lbl, key, val) in enumerate(fields_right):
             self._param_row(param_outer, lbl, key, val, r, 2)
 
-        # hint
         tk.Label(param_outer,
                  text="💡  Lists accepted for ramp-up & think time e.g.  [2, 4, 6, 8]",
                  bg=BG2, fg=TEXT_DIM, font=("Segoe UI", 8, "italic")
@@ -343,16 +356,20 @@ class BenchUI:
         self.lbl_errors    = self._card(cards_frame, "ERRORS",        "—",  RED,    2)
         self.lbl_error_pct = self._card(cards_frame, "ERROR RATE",    "—",  YELLOW, 3)
         self.lbl_elapsed   = self._card(cards_frame, "ELAPSED",       "—",  WHITE,  4)
-        self.lbl_metrics       = self._card(cards_frame, "AVG-A.TP-T.TP-EFF",           "—",  WHITE, 5)
-        #self.lbl_tp = self._card(cards_frame, "THROUGHPUT", "—", TEXT_DIM, 6)
-        #self.lbl_eff = self._card(cards_frame, "Effiency", "—", TEXT_DIM, 7)
-        #self.lbl_db        = self._card(cards_frame, "DATABASE",      "—",  TEXT_DIM, 5)
+        self.lbl_metrics   = self._card(cards_frame, "AVG-A.TP-T.TP-EFF", "—", WHITE, 5)
 
-        # ── Console ───────────────────────────
-        log_frame = ttk.LabelFrame(self.root, text="  📋  Console Output",
-                                   style="Card.TLabelframe")
-        log_frame.grid(row=6, column=0, sticky="nsew", padx=16, pady=(4, 12))
+        # ── Bottom split: Console (left) + Chart (right) ──────
+        bottom = tk.Frame(self.root, bg=BG)
+        bottom.grid(row=6, column=0, sticky="nsew", padx=16, pady=(4, 12))
+        bottom.columnconfigure(0, weight=3)
+        bottom.columnconfigure(1, weight=2)
+        bottom.rowconfigure(0, weight=1)
         self.root.rowconfigure(6, weight=1)
+
+        # ── Console ────────────────────────────────────────
+        log_frame = ttk.LabelFrame(bottom, text="  📋  Console Output",
+                                   style="Card.TLabelframe")
+        log_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
         self.console = scrolledtext.ScrolledText(
             log_frame, height=16,
@@ -365,12 +382,34 @@ class BenchUI:
             spacing1=4, spacing2=2, spacing3=6)
         self.console.pack(fill="both", expand=True, padx=2, pady=2)
 
-        self.console.tag_config("ok",     foreground="#1a7a4a")   # dark green
-        self.console.tag_config("err",    foreground="#c0392b")   # dark red
-        self.console.tag_config("warn",   foreground="#b85c00")   # dark amber
-        self.console.tag_config("info",   foreground="#1a3a6e")   # dark navy
-        self.console.tag_config("muted",  foreground="#7a8a9a")   # muted grey timestamp
-        self.console.tag_config("sep",    foreground="#7c4daa")   # purple separator
+        self.console.tag_config("ok",     foreground="#1a7a4a")
+        self.console.tag_config("err",    foreground="#c0392b")
+        self.console.tag_config("warn",   foreground="#b85c00")
+        self.console.tag_config("info",   foreground="#1a3a6e")
+        self.console.tag_config("muted",  foreground="#7a8a9a")
+        self.console.tag_config("sep",    foreground="#7c4daa")
+
+        # ── Live Chart ─────────────────────────────────────
+        chart_frame = ttk.LabelFrame(bottom, text="  📈  Performance Monitor",
+                                     style="Card.TLabelframe")
+        chart_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        chart_frame.rowconfigure(0, weight=1)
+        chart_frame.columnconfigure(0, weight=1)
+
+        self._fig = Figure(figsize=(5, 6), dpi=88, facecolor="#f8fafc")
+        self._fig.subplots_adjust(hspace=0.55, top=0.95, bottom=0.08,
+                                  left=0.10, right=.90)
+
+        self._ax_rt  = self._fig.add_subplot(4, 1, 1)
+        self._ax_tps = self._fig.add_subplot(4, 1, 2)
+        self._ax_tpm = self._fig.add_subplot(4, 1, 3)
+        self._ax_eff = self._fig.add_subplot(4, 1, 4)
+
+        self._init_chart_axes()
+
+        self._canvas = FigureCanvasTkAgg(self._fig, master=chart_frame)
+        self._canvas.draw()
+        self._canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
     # ── Helper: parameter row ──────────────────────────────────
     def _param_row(self, parent, label, key, default, row, col_offset):
@@ -418,7 +457,15 @@ class BenchUI:
         cfg.error_percent=0
         cfg.el=0
         cfg.stop_requested=False
-        self.root.title(f"⚡ Performance Bench Test — Control Panel")
+        self.users = 0
+        # reset chart buffers
+        self._chart_time=[]; self._chart_avg_rt=[]; self._chart_tps=[]
+        self._chart_tpm=[]; self._chart_eff=[]
+        for ax in (self._ax_rt, self._ax_tps, self._ax_tpm, self._ax_eff):
+            ax.cla()
+        self._init_chart_axes()
+        self._canvas.draw_idle()
+        self.root.title("⚡ Performance Bench Test — Control Panel")
 
     # ── Parameter parsing ─────────────────────────────────────
     def _apply_params(self):
@@ -583,6 +630,59 @@ class BenchUI:
         self.root.after(0, lambda: self.btn_stop.configure(state="disabled"))
         self._test_done_flag=True
 
+    # ── Chart helpers ─────────────────────────────────────────
+    def _init_chart_axes(self):
+        for ax, title, colour in [
+            (self._ax_rt,  "Avg Response Time (s)", "#1a7a4a"),
+            (self._ax_tps, "Throughput (t/s)",       "#7c4daa"),
+            (self._ax_tpm, "Theoretical Throughput (t/s)",      "#1e3a5f"),
+            (self._ax_eff, "Efficiency (%)",          "#b85c00"),
+        ]:
+            ax.set_title(title, fontsize=7, color="#1a1a2e", pad=3)
+            ax.tick_params(labelsize=6)
+            ax.set_facecolor("#eef2f7")
+            ax.grid(True, linestyle="--", linewidth=0.4, color="#cccccc")
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.plot([], [], color=colour, linewidth=1.4)
+
+    def _update_chart(self, elapsed, avg_rt, tps, tpm, eff):
+        self._chart_time.append(elapsed)
+        self._chart_avg_rt.append(avg_rt)
+        self._chart_tps.append(tps)
+        self._chart_tpm.append(tpm)
+        self._chart_eff.append(eff)
+
+        for lst in (self._chart_time, self._chart_avg_rt,
+                    self._chart_tps, self._chart_tpm, self._chart_eff):
+            if len(lst) > self._MAX_POINTS:
+                del lst[0]
+
+        t = self._chart_time
+
+        def _redraw(ax, data, colour, label):
+            ax.cla()
+            ax.set_title(label, fontsize=7, color="#1a1a2e", pad=3)
+            ax.tick_params(labelsize=6)
+            ax.set_facecolor("#eef2f7")
+            ax.grid(True, linestyle="--", linewidth=0.4, color="#cccccc")
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.plot(t, data, color=colour, linewidth=1.4)
+            if data:
+                ax.set_xlim(t[0], max(t[-1], t[0] + 1))
+                ax.fill_between(t, data, alpha=0.12, color=colour)
+                ax.annotate(f"{data[-1]:.2f}", xy=(t[-1], data[-1]),
+                            fontsize=6, color=colour,
+                            xytext=(3, 3), textcoords="offset points")
+
+        _redraw(self._ax_rt,  self._chart_avg_rt, "#1a7a4a", "Avg Response Time (s)")
+        _redraw(self._ax_tps, self._chart_tps,    "#7c4daa", "Throughput (t/s)")
+        _redraw(self._ax_tpm, self._chart_tpm,    "#1e3a5f", "Theoretical Throughput (t/s)")
+        _redraw(self._ax_eff, self._chart_eff,    "#b85c00", "Efficiency (%)")
+
+        self._canvas.draw_idle()
+
     # ── Live ticker (every 1 s) ───────────────────────────────
     def _tick(self):
         if not self._stop_flag and not self._test_done_flag:
@@ -592,15 +692,25 @@ class BenchUI:
             self.lbl_error_pct.set(f"{cfg.error_percent:.1f}%")
             if cfg.test_start_time:
                 self.users = max(cfg.running_users, self.users)
-                cfg.el +=1 #int(time.time() - cfg.test_start_time)
+                cfg.el += 1
                 self.lbl_elapsed.set(f"{cfg.el//60:02d}:{cfg.el%60:02d}")
-                #self.lbl_elapsed.set(str(el))
                 try:
-                    ttp=round(self.users / (cfg.avg), 0)
-                    eff=round(((cfg.samples_started/(int(cfg.el)))/(self.users/(cfg.avg))*100),0)
-                    #round(((t.samples / (t.ttime * 60)) / (u.users / (AVG(response_time) / 1000)) * 100), 0)
-                    self.lbl_metrics.set(f"{cfg.avg:.2f}s - {(cfg.samples_started/int(cfg.el)):.2f}t/s - {ttp:.2f}t/s - {eff:.0f}%")
-                except:
+                    el = int(cfg.el) or 1
+                    tps = cfg.samples_started / el
+                    tpm = tps * 60
+                    ttp = round(self.users / cfg.avg, 2) if cfg.avg else 0
+                    eff = round((tps / (self.users / cfg.avg)) * 100, 1) if cfg.avg else 0
+                    self.lbl_metrics.set(
+                        f"{cfg.avg:.2f}s - {tps:.2f}t/s - {ttp:.2f}t/s - {eff:.0f}%"
+                    )
+                    self._update_chart(
+                        elapsed=el,
+                        avg_rt=round(cfg.avg, 2),
+                        tps=round(tps, 2),
+                        tpm=round(ttp, 2),
+                        eff=round(eff, 0),
+                    )
+                except Exception:
                     pass
             self.root.after(1000, self._tick)
         else:
